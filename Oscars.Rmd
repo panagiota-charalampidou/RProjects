@@ -1,0 +1,179 @@
+---
+title: "Is the public interested in the Oscars?"
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+In March 2019, the british newspaper "The Economist" published an article claiming that Oscar winner movies are no longer tastemakers (https://www.economist.com/graphic-detail/2019/03/02/the-oscars-influence-has-waned). Essentially a report was published, showing that Academy Award winners and nominnees were not referenced as much in other films and TV shows. Additionally, such movies do not enjoy the same commercial success they used to.
+
+In this project I will be investigating whether the Oscar Award nomination for the Best Motion Picture has an effect on the public's interest for the movie. 
+
+## Analysis
+
+I will first make use of Google Trend data to see if the public is interested in the Oscars in the first place. For that I need the `gtrendsR` package.
+
+```{r}
+#Load necessary libraries
+library(gtrendsR)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(knitr)
+library(rmarkdown)
+
+#Gather the data
+trends <- gtrends(keyword = c("oscars","oscar movies", "oscar winner","oscar nominations"))
+trends_over_time <- trends$interest_over_time %>% 
+  mutate(hits=as.numeric(hits))
+trends_over_time[is.na(trends_over_time)] <- 0
+
+#Visualize the results
+trends_plot <- ggplot(trends_over_time, aes(x=date, y=hits))+
+  geom_line(aes(color=keyword))+
+  labs(title="Google Trend data for Oscar movie winners and nominnees")
+trends_plot
+```
+When looking at searches relevant to the Oscars, there is a spike after the event, as well as a smaller rise in interest at the time that the nominations are made. So, evidently, the public is interested on the event. Now let's take a closer look to what happened on 2020.
+
+Below I demonstrate the Google Trends data for the 9 movies nominated for Best Picture 2020:
+```{r}
+nominees_2020_a <- gtrends(keyword = c("parasite", "ford v ferrari", "the irishman", "jojo rabbit","joker"))
+nominees_2020_b <- gtrends(keyword = c("little women", "marriage story", "1917", "once upon a time in hollywood"))
+
+nominees_2020_a <- nominees_2020_a$interest_over_time %>% 
+  mutate(hits=as.numeric(hits))
+nominees_2020_a[is.na(nominees_2020_a)] <- 0
+
+nominees_2020_b <- nominees_2020_b$interest_over_time %>% 
+  mutate(hits=as.numeric(hits))
+nominees_2020_b[is.na(nominees_2020_b)] <- 0
+
+nominees_2020 <- rbind(nominees_2020_a, nominees_2020_b) 
+
+nominees_2020_plot <- ggplot(nominees_2020, aes(x=date,y=hits))+
+  geom_line(aes(color=keyword))
+nominees_2020_plot
+```
+
+
+Apparently some of these titles have been searched prior to 2020. Let's filter that out:
+```{r}
+nominees_2020_only <- nominees_2020[nominees_2020$date >= "2020-01-01",]
+
+nominees_2020_only_plot <- ggplot(nominees_2020_only, aes(x=date,y=hits))+
+  geom_line(aes(color=keyword))
+nominees_2020_only_plot
+```
+There is a spike in interest in most of the movies at the beginning of January - when the nominations are announced - and on February, when the ceremony is held. It is here significant to note the spike in interest for Parasite, a movie relatively unknown to the wider public before its nomination. But obviously the public's curiosity on what movie got nominated or won the prestigious award does not necessarily lead to an interest on the movie itself.
+
+To figure that out, let's check what the weekly box office revenues of these films looked like throughout the year. For that puprpose I extracted data from the boxofficemojo.com website. The data correspond to the domestic US market. The functions used are heavily influnced by Archel Aguilar's article in RPubs (https://www.rpubs.com/AA98081767/412128) but I made some modifications to match the needs of this project.
+
+First I construct a function to create a dataframe with weekly box office data in one week:
+```{r}
+#Load necessary packages
+library(httr)
+library(rvest)
+library(magrittr)
+library(lubridate)
+
+#Create the function
+getWeeklyBoxOffice <- function(theYear, theWeek) {
+  
+  if (strtoi(theYear) == 2020 & strtoi(theWeek) <= 52) {
+  
+    tryCatch(
+      {  
+        base_url = "https://www.boxofficemojo.com/weekly/chart/"
+        query_params = list(yr=theYear, wk=theWeek)
+        
+        myResp = GET(url = base_url, query=query_params)
+        
+        myPage_html = read_html(myResp)
+        
+        myColNames = c("Rank this week", "Rank last week", "Title", "WeeklyGross", "PctChange", "TheatreCount", "TheatreChange", "Average", "TotalGross", "Weeks", "Distributor", "New this week", "Estimated")
+        
+          myWeeklyBoxOffice = myPage_html %>%
+          html_nodes("table") %>%
+          extract2(1) %>%
+          html_table() %>%
+          setNames(myColNames) %>%
+          mutate(calYear=theYear, calWeek=theWeek)
+        
+          return(myWeeklyBoxOffice)
+      },
+          error=function(e) return(NULL)
+    )
+  }
+  else {
+    return(NULL) 
+  }
+}
+
+#Check the results
+df1 <- getWeeklyBoxOffice("2020", "6") 
+df1 <- filter(df1, Title == "1917" | Title == "Parasite" | Title =="Ford v Ferrari" | Title == "Jojo Rabbit" | Title == "Joker"| Title == "Little Women" | Title == "Once Upon a Time... In Hollywood" | Title == "Marriage Story" | Title == "The Irishman") %>% 
+  select(-`Rank last week`, -PctChange, -TheatreCount, -Average, -TotalGross, -Weeks, -Distributor, -`New this week`, -Estimated)
+df1
+```
+Then I create a function to get all of the weekly box office data for 2020 (also heavily influenced by Archel Aguilar):
+
+```{r}
+#Create the function
+getBoxOffice2020 = function(year) {
+  
+  mydf = NULL
+  fulldf = NULL
+  for (x in 1:52) {
+    myYear = year
+    myWeek = x
+    
+    mydf = getWeeklyBoxOffice(myYear, myWeek)
+    if(!is.null(mydf)) {
+      if(!is.null(fulldf)) {
+        fulldf = rbind(fulldf, mydf)  
+      } else {
+        fulldf = mydf
+      }
+      
+    }
+  }
+  return(fulldf)  
+
+}
+
+#Check the results
+full_df <- getBoxOffice2020("2020")
+full_df_clean <- full_df %>% 
+  filter(Title == "1917" | Title == "Parasite" | Title =="Ford v Ferrari" | Title == "Jojo Rabbit" | Title == "Joker"| Title == "Little Women" | Title == "Once Upon a Time... In Hollywood" | Title == "Marriage Story" | Title == "The Irishman") %>% 
+   select(-`Rank last week`, -TheatreCount, -Average, -TotalGross, -Weeks, -Distributor, -`New this week`, -Estimated, -PctChange) %>% 
+  mutate(WeeklyGross=gsub('\\$','',WeeklyGross)) %>% 
+  mutate(WeeklyGross=gsub('\\,','', WeeklyGross)) %>% 
+  mutate(WeeklyGross=as.numeric(WeeklyGross))
+
+head(full_df_clean)
+
+```
+Note how the movies Marriage Story and the Irishman are not represented on the graphs, because they were both released on Netflix and thus had no box office revenues. 
+
+And now it is time to visualize the data:
+```{r}
+boxoffice_revenues_of_2020_nominees <- ggplot(full_df_clean,aes(x=calWeek, y=WeeklyGross))+
+  geom_line(aes(color = Title))+
+  labs(title = "Weekly box office revenues of Oscar nominees", x = "Calendar Week", y = "Weekly Gross Revenues") 
+boxoffice_revenues_of_2020_nominees
+```
+Note that the week time frame is limited to 12 weeks, because at around that time covid-19 measures in the USA required that the cinemas close. 
+
+The oscar nominations were announced on Mon, Jan 13, which corresponds to the third week of 2020. On that week, gross box office revenues increased for Ford v Ferrari, Jojo Rabbit, Little Women, Once Upon a Time... In Hollywood and Parasite. The revenues seem to fall for Joker and 1917, albeit at a decreased rate. That said, both of these movies seemed to have a spike in interest even before the nominations.
+
+The oscar ceremony was held on Mon, Feb 10, which corresponds to the seventh week of 2020. On that week, no significant increases are observed. The only outlier here seems to be Parasite, which seems to enjoy its peak weekly revenues. That is not surprising, given that the movie was not as famous in the US before being being nominated for and eventually winning the oscar for the Best Motion Picture of the Year. 
+
+## Conclusion
+Concluding, the public does seem to have an appreciation for the Oscars and to to be interested in the nominations, as demonstrated by the Google Trends data on searches for terms relevant to the event. But the revenue data demonstrate that the nominations only inspire a visit to the cinema at a limited degree. 
+
+However, for a movie like Parasite, which was relatively unknown to the american public, the Oscars seem to have caused a boost both to its popularity and revenues. Various newspaper articles on the topic commented how the event will reshape the world's view of Korean cinema and culture more general. Parasite also being the first non-English movie to win the award, there are speculations about an increase in the popularity of non-English movies of different origins as well (https://world.kbs.co.kr/service/contents_view.htm?lang=e&menu_cate=business&board_seq=379867). So the Oscars could inspire a taste for movies which are outside the mainstream market.
